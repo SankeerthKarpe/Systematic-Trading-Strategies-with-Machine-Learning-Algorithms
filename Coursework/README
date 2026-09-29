@@ -1,0 +1,269 @@
+# Group-2
+
+![Methodology overview](Methodology.jpg)
+
+This repository contains a systematic trading machine-learning coursework project developed by Group 2. The project builds meta-models on top of a supplied primary trading signal for futures markets. For each active primary signal, the meta-model estimates the probability that taking the trade will be profitable under a triple-barrier exit rule.
+
+The coursework pipeline follows the required structure:
+
+1. Feature engineering from OHLCV data.
+2. Triple-barrier labeling and meta-label construction.
+3. Model development and comparison across linear, tree-based, and neural-network models.
+4. Cluster-level feature importance.
+5. Out-of-sample model evaluation and final prediction generation.
+6. Optional portfolio weight allocation from meta-model probabilities.
+
+## Main Deliverables
+
+This project produces two main deliverables:
+
+| Deliverable | Description |
+| --- | --- |
+| `final_prediction_csvs` | CSV files containing final meta-model predictions, including the estimated probability that each active primary signal should be taken. The current final file is `06_results/final_predictions.csv`. |
+| `neural_strategy_weights` | Outputs from the neural strategy layer, which uses model-generated probabilities to determine portfolio allocation weights. The current final file is `06_results/neural_strategy_weights.csv`. |
+
+## Universe
+
+The raw data covers 11 instruments across three asset classes:
+
+| Asset class | Instruments |
+| --- | --- |
+| Equity index futures | `ES1S`, `NQ1S`, `FESX1S` |
+| Energy | `CL1S`, `HO1S`, `RB1S`, `NG1S` |
+| Metals | `GC1S`, `SI1S`, `HG1S`, `PL1S` |
+
+Our final modelling focus and documentation are on the energy instruments: `CL1S`, `HO1S`, `RB1S`, and `NG1S`.
+
+## Repository Structure
+
+```text
+.
++-- 01_feature_engineering/
+|   +-- hmm/                         # HMM latent regime features
+|   +-- technical_analysis/          # Technical indicator feature library
+|   +-- *.ipynb                      # Feature matrix and initial filtering notebooks
++-- 02_triple_barrier/               # Triple-barrier labeling utilities and batch configs
++-- 03_model_development/
+|   +-- Feature Selection/           # Correlation clustering and PCA helpers
+|   +-- Linear/                      # Logistic regression experiments
+|   +-- Neural Network/              # Variable Selection Network notebooks
+|   +-- Tree/                        # Random forest experiments
++-- 04_feature_importance/           # Selected-model refit and cluster importance
++-- 05_model_evaluation/             # Final out-of-sample evaluation scripts/notebooks
++-- 06_results/                      # Final prediction and strategy weight outputs
++-- 07_portfolio_weight_allocation_strategy/
+|   +-- allocate_portfolio_weights.py
+|   +-- neural_portfolio_allocator.py
+|   +-- visualise_strategy_weights.py
+|   +-- README.md
++-- data/raw/                        # Supplied OHLCV and primary signal data
++-- Methodology.jpg                  # Pipeline diagram
++-- requirements.txt                 # Python dependencies
+```
+
+## Setup
+
+Create and activate a virtual environment, then install the project dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+For notebook work, register the environment as a Jupyter kernel:
+
+```bash
+python -m ipykernel install --user --name group-2 --display-name "Group-2"
+```
+
+## Data Inputs
+
+Required raw files are stored in `data/raw/`:
+
+| File | Description |
+| --- | --- |
+| `ohlcv_data.csv` | Daily futures OHLCV panel with `date`, `instrument`, `open`, `high`, `low`, `close`, `volume`, and `open_interest`. |
+| `primary_signals.csv` | Daily primary model signals in wide format, with one column per instrument and values in `{-1, 0, 1}`. |
+
+Generated feature, label, model, and evaluation files are written under `data/features/`, `results/`, `deliverables/`, or `06_results/` depending on the stage.
+
+## Pipeline
+
+Run the project from the repository root.
+
+### 1. Feature Engineering
+
+Generate technical analysis features:
+
+```bash
+python 01_feature_engineering/technical_analysis/technical_analysis.py
+```
+
+Generate HMM latent regime features and interpreted regime categories:
+
+```bash
+python 01_feature_engineering/hmm/regime_detection.py
+python 01_feature_engineering/hmm/regime_categories.py
+```
+
+Then run the feature notebooks:
+
+```text
+01_feature_engineering/feature_engineering_matrix.ipynb
+01_feature_engineering/initial_feature_selection_with_low_variance_fixed.ipynb
+```
+
+### 2. Triple-Barrier Labels
+
+Generate label files for all instruments and configured barrier settings:
+
+```bash
+python 02_triple_barrier/run_triple_barrier_configs.py
+```
+
+This writes instrument/config-level label files to:
+
+```text
+data/features/triple_barrier/
+```
+
+The implementation supports EWMA, rolling, Parkinson, and Garman-Klass volatility estimates. The batch script currently uses multiple take-profit/stop-loss widths and vertical barrier horizons.
+
+Triple-barrier logic:
+
+- Active primary signals receive take-profit, stop-loss, and vertical timeout barriers.
+- If the take-profit or stop-loss barrier is hit first, the event is labeled using the first touched horizontal barrier.
+- If the vertical barrier is reached first, the event times out.
+- Timeout events are not automatically failures: the `metalabel` is still based on profitability at the timeout price. If following the primary signal made money by timeout, `metalabel = 1`; otherwise, `metalabel = 0`.
+
+### 3. Model Development
+
+Run the model-development notebooks:
+
+```text
+03_model_development/Linear/logisitic_regression.ipynb
+03_model_development/Tree/random_forest.ipynb
+03_model_development/Neural Network/variable_selection_network_cl1s.ipynb
+03_model_development/Neural Network/variable_selection_network_ho1s.ipynb
+03_model_development/Neural Network/variable_selection_network_rb1s.ipynb
+03_model_development/Neural Network/variable_selection_network_ng1s.ipynb
+```
+
+The comparison workflow is expected to produce:
+
+```text
+results/model_comparison.csv
+```
+
+Model validation used CPCV, or combinatorial purged cross-validation, to train and validate models while reducing leakage from overlapping financial labels. This gave a more robust comparison across model families and hyperparameters than a single chronological split.
+
+### 4. Feature Importance
+
+After `results/model_comparison.csv` exists, compute feature-level and cluster-level importance for selected models:
+
+```bash
+python 04_feature_importance/cluster_feature_importance.py
+```
+
+Key outputs:
+
+```text
+results/feature_importance_top3_by_auc.csv
+results/feature_importance_selected_models.csv
+results/selected_model_run_configs.csv
+results/feature_importance_feature_level.csv
+results/feature_importance_cluster_level.csv
+```
+
+### 5. Model Evaluation
+
+Run the evaluation notebook or script:
+
+```text
+05_model_evaluation/model_evaluation.ipynb
+```
+
+To regenerate a final prediction CSV with the script and keep it in the repository's current result folder:
+
+```bash
+python 05_model_evaluation/evaluate_selected_models.py \
+  --config-path results/selected_model_run_configs.csv \
+  --output-path 06_results/final_predictions.csv
+```
+
+The final output format is:
+
+```text
+date,instrument,prediction
+```
+
+The current final probability output is:
+
+```text
+06_results/final_predictions.csv
+```
+
+### 6. Portfolio Weight Allocation
+
+The optional strategy layer converts meta-model probabilities into signed portfolio weights for the energy instruments. It uses the primary signal for direction, the meta-model probability for conviction, and volatility targeting to scale positions.
+
+Methodology:
+
+- Fixed allocator: filters out probabilities at or below `0.50`, uses the primary signal as trade direction, sizes by model confidence, then applies volatility targeting and exposure caps.
+- Neural allocator: learns a conviction score with `conviction_strength = tanh(x @ beta + ticker_bias) ** 2`, using technical features, primary signal, probability features, and instrument bias.
+- The neural training objective in code is `objective = sharpe - exposure_cost - turnover_cost`, which is equivalent to minimizing the loss `-sharpe + exposure_cost + turnover_cost`.
+- Early stopping is based on validation Sharpe, and the neural overlay sizes accepted primary signals without flipping their direction.
+
+Run the fixed rule-based allocator:
+
+```bash
+python 07_portfolio_weight_allocation_strategy/allocate_portfolio_weights.py \
+  --probability-csv 06_results/final_predictions.csv \
+  --output-dir 07_portfolio_weight_allocation_strategy/outputs
+```
+
+Run the neural allocation overlay:
+
+```bash
+python 07_portfolio_weight_allocation_strategy/neural_portfolio_allocator.py \
+  --inference-probability-csv 06_results/final_predictions.csv
+```
+
+The neural allocator also expects an in-sample probability file and merged feature matrix when training from scratch:
+
+```text
+deliverables/insample_predicitons/insample_predictions.csv
+data/features/merged_feature_matrix.csv
+```
+
+Compare the fixed and neural strategies:
+
+```bash
+python 07_portfolio_weight_allocation_strategy/visualise_strategy_weights.py \
+  --fixed-weights 07_portfolio_weight_allocation_strategy/outputs/strategy_weights.csv \
+  --neural-weights 07_portfolio_weight_allocation_strategy/outputs/neural_portfolio/neural_strategy_weights.csv \
+  --output-dir 07_portfolio_weight_allocation_strategy/outputs/strategy_comparison
+```
+
+The current final neural strategy weight output is:
+
+```text
+06_results/neural_strategy_weights.csv
+```
+
+## Methodology Notes
+
+- The meta-model target is the binary `metalabel`, which indicates whether following the primary signal was profitable by the first barrier touch or timeout.
+- The triple-barrier stage excludes zero primary-signal rows before labeling.
+- HMM regime probabilities are computed with filtered probabilities to avoid future leakage.
+- The default evaluation split uses a clean 2022+ out-of-sample window.
+- Feature importance is reported at both feature and cluster levels to account for correlated predictors.
+- The portfolio allocation layer applies a 10% target volatility, 25% per-instrument cap, and 100% daily gross exposure cap.
+- The neural portfolio overlay minimizes penalized negative Sharpe through the equivalent maximization objective `sharpe - exposure_cost - turnover_cost`.
+
+## Future Work
+
+A natural next layer would be an opportunity model for days where the supplied primary signal is `0`. The current meta-model only decides whether to accept or reject active primary signals, so it ignores periods where the primary model stayed flat but the market may still have offered a profitable trade.
+
+The opportunity model would learn from zero-signal observations by asking whether a long or short position would have been profitable under a similar triple-barrier framework. Its output could become an additional strategy layer: first use the existing meta-model to filter active primary signals, then use the opportunity model to identify missed trades when the primary model is flat. This would make better use of the full dataset and could help capture trades the original primary signal failed to express.
